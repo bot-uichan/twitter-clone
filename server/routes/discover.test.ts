@@ -8,26 +8,27 @@ const { createUser, db } = await setup();
 
 describe("/routes/discover", () => {
 	it("直近投稿のハッシュタグからトレンドを返す", async () => {
-		const user = await createUser();
+		const userA = await createUser();
+		const userB = await createUser();
 
 		await db.insert(schema.posts).values([
 			{
 				id: "discover_post_1",
-				authorId: user.id,
+				authorId: userA.id,
 				content: "Working with #NextJS and #TypeScript",
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
 			{
 				id: "discover_post_2",
-				authorId: user.id,
+				authorId: userB.id,
 				content: "Shipped feature using #nextjs",
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
 			{
 				id: "discover_post_old",
-				authorId: user.id,
+				authorId: userA.id,
 				content: "Old topic #legacy",
 				createdAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
 				updatedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
@@ -45,6 +46,39 @@ describe("/routes/discover", () => {
 		expect(json.trends.some((trend) => trend.tag === "#nextjs")).toBe(true);
 		expect(json.trends.find((trend) => trend.tag === "#nextjs")?.count).toBe(2);
 		expect(json.trends.some((trend) => trend.tag === "#legacy")).toBe(false);
+	});
+
+	it("トレンド集計は500件超を読みつつ、単一ユーザー連投を抑制する", async () => {
+		const userA = await createUser();
+		const userB = await createUser();
+
+		const now = new Date();
+		await db.insert(schema.posts).values([
+			...Array.from({ length: 550 }, (_, index) => ({
+				id: `discover_post_many_a_${index}`,
+				authorId: userA.id,
+				content: "bulk #alice",
+				createdAt: now,
+				updatedAt: now,
+			})),
+			...Array.from({ length: 30 }, (_, index) => ({
+				id: `discover_post_many_b_${index}`,
+				authorId: userB.id,
+				content: "bulk #alice",
+				createdAt: now,
+				updatedAt: now,
+			})),
+		]);
+
+		const response = await app.request("/", {
+			method: "GET",
+		});
+		const json = (await response.json()) as {
+			trends: Array<{ tag: string; count: number }>;
+		};
+
+		expect(response.status).toBe(200);
+		expect(json.trends.find((trend) => trend.tag === "#alice")?.count).toBe(10);
 	});
 
 	it("おすすめユーザーは自分とフォロー済みを除外する", async () => {
